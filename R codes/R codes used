@@ -1,0 +1,676 @@
+# ============================================================
+# HEALTH FACILITY PERFORMANCE, SERVICE READINESS & EQUITY
+# Ethiopia Service Provision Assessment (SPA) 2021–22
+# M&E Portfolio Analysis
+# ============================================================
+
+# 1. PACKAGES -------------------------------------------------
+library(tidyverse)
+library(haven)
+library(labelled)
+
+# 2. IMPORT DATA ----------------------------------------------
+# Change this path to your local SPA dataset
+spa_raw <- read_dta("data/spa_2021_22.dta")
+
+# 3. SELECT CORE VARIABLES ------------------------------------
+vars_keep <- c(
+  "v001","v003","v007","v008","v014a","v015a","v012c","v005",
+  "v120a","v124","v401a","v430","v431a1",
+  "v501a","v530","v531a1","v531c","v531g",
+  "v531xd","v531xe","v531xh","v531xl","v531xo",
+  "v264","v264a1","v264c","v265b","v265c","v265d","v265h",
+  "v266a","v266b","v2001a","v2001b"
+)
+
+spa <- spa_raw %>%
+  select(all_of(vars_keep))
+
+# 4. INDICATOR RECODING FUNCTIONS -----------------------------
+
+service_ready <- function(x) {
+  case_when(
+    x == 1 ~ 1,
+    x == 0 ~ 0,
+    TRUE ~ NA_real_
+  )
+}
+
+availability_ready <- function(x) {
+  case_when(
+    x %in% c(1, 2) ~ 1,
+    x == 0 ~ 0,
+    TRUE ~ NA_real_
+  )
+}
+
+privacy_ready <- function(x) {
+  case_when(
+    x %in% c(1, 2) ~ 1,
+    x %in% c(0, 4) ~ 0,
+    TRUE ~ NA_real_
+  )
+}
+
+equipment_ready <- function(x) {
+  case_when(
+    x %in% c(1, 4) ~ 1,
+    x == 0 ~ 0,
+    TRUE ~ NA_real_
+  )
+}
+
+electricity_ready <- function(x) {
+  case_when(
+    x == 1 ~ 1,
+    x %in% c(0, 2, 3) ~ 0,
+    TRUE ~ NA_real_
+  )
+}
+
+water_ready <- function(x) {
+  case_when(
+    x %in% c(1, 2) ~ 1,
+    x == 0 ~ 0,
+    TRUE ~ NA_real_
+  )
+}
+
+# 5. CREATE ANALYTICAL INDICATORS ------------------------------
+
+spa_clean <- spa %>%
+  mutate(
+    electricity = electricity_ready(v120a),
+    water_access = water_ready(v124),
+
+    anc_service = service_ready(v014a),
+    anc_privacy = privacy_ready(v430),
+    anc_running_water = water_ready(v124),
+
+    delivery_service = service_ready(v015a),
+    delivery_privacy = privacy_ready(v530),
+    delivery_running_water = water_ready(v124),
+    delivery_soap = equipment_ready(v531a1),
+    delivery_gloves = equipment_ready(v531c),
+    delivery_suture = equipment_ready(v531g),
+    delivery_scissors = equipment_ready(v531xd),
+    delivery_pack = equipment_ready(v531xe),
+    delivery_cord_clamp = equipment_ready(v531xh),
+    delivery_bed = equipment_ready(v531xl),
+
+    child_service = service_ready(v012c),
+    child_privacy = privacy_ready(v264),
+    child_running_water = water_ready(v124),
+    child_soap = equipment_ready(v264a1),
+    child_infant_scale = equipment_ready(v264c),
+    child_scale = equipment_ready(v265b),
+    child_thermometer = equipment_ready(v265c),
+    child_stethoscope = equipment_ready(v265d),
+    child_imnci_guideline = equipment_ready(v265h),
+    child_imnci_chart = equipment_ready(v266a)
+  )
+
+# 6. SURVEY WEIGHT ---------------------------------------------
+
+spa_analysis <- spa_clean %>%
+  filter(v005 > 0) %>%
+  mutate(
+    analysis_weight = v005 / 1000000
+  )
+
+# Service-specific analytical datasets
+anc_analysis <- spa_analysis %>%
+  filter(anc_service == 1)
+
+delivery_analysis <- spa_analysis %>%
+  filter(delivery_service == 1)
+
+child_analysis <- spa_analysis %>%
+  filter(child_service == 1)
+
+# 7. READINESS INDICES -----------------------------------------
+
+anc_vars <- c(
+  "anc_privacy",
+  "anc_running_water"
+)
+
+delivery_vars <- c(
+  "delivery_privacy",
+  "delivery_running_water",
+  "delivery_soap",
+  "delivery_gloves",
+  "delivery_suture",
+  "delivery_scissors",
+  "delivery_pack",
+  "delivery_cord_clamp",
+  "delivery_bed"
+)
+
+child_vars <- c(
+  "child_privacy",
+  "child_running_water",
+  "child_soap",
+  "child_infant_scale",
+  "child_scale",
+  "child_thermometer",
+  "child_stethoscope",
+  "child_imnci_guideline",
+  "child_imnci_chart"
+)
+
+spa_analysis <- spa_analysis %>%
+  mutate(
+    anc_readiness = rowMeans(
+      across(all_of(anc_vars)), na.rm = TRUE
+    ) * 100,
+
+    delivery_readiness = rowMeans(
+      across(all_of(delivery_vars)), na.rm = TRUE
+    ) * 100,
+
+    child_n = rowSums(
+      !is.na(across(all_of(child_vars)))
+    ),
+
+    child_readiness = if_else(
+      child_n >= 7,
+      rowMeans(across(all_of(child_vars)), na.rm = TRUE) * 100,
+      NA_real_
+    )
+  )
+
+anc_analysis <- spa_analysis %>%
+  filter(anc_service == 1)
+
+delivery_analysis <- spa_analysis %>%
+  filter(delivery_service == 1)
+
+child_analysis <- spa_analysis %>%
+  filter(child_service == 1)
+
+# 8. WEIGHTED MEAN FUNCTION -----------------------------------
+
+weighted_mean <- function(x, w) {
+  ok <- !is.na(x) & !is.na(w)
+  sum(x[ok] * w[ok]) / sum(w[ok])
+}
+
+weighted_percent <- function(x, w) {
+  weighted_mean(x, w) * 100
+}
+
+# 9. NATIONAL PERFORMANCE -------------------------------------
+
+# Service availability
+anc_availability <- weighted_percent(
+  spa_analysis$anc_service,
+  spa_analysis$analysis_weight
+)
+
+delivery_availability <- weighted_percent(
+  spa_analysis$v007 != 5 &
+    spa_analysis$delivery_service == 1,
+  spa_analysis$analysis_weight
+) /
+  weighted_percent(
+    spa_analysis$v007 != 5,
+    spa_analysis$analysis_weight
+) * 100
+
+child_availability <- weighted_percent(
+  spa_analysis$child_service,
+  spa_analysis$analysis_weight
+)
+
+# Readiness
+anc_readiness <- weighted_mean(
+  anc_analysis$anc_readiness,
+  anc_analysis$analysis_weight
+)
+
+delivery_readiness <- weighted_mean(
+  delivery_analysis$delivery_readiness,
+  delivery_analysis$analysis_weight
+)
+
+child_readiness <- weighted_mean(
+  child_analysis$child_readiness,
+  child_analysis$analysis_weight
+)
+
+# Readiness deficit = distance from 100% readiness
+anc_deficit <- 100 - anc_readiness
+delivery_deficit <- 100 - delivery_readiness
+child_deficit <- 100 - child_readiness
+
+final_mne_table <- tibble(
+  Domain = c("ANC", "Normal Delivery", "Child Health"),
+  Facilities_with_service = c(
+    nrow(anc_analysis),
+    nrow(delivery_analysis),
+    nrow(child_analysis)
+  ),
+  Service_Availability = c(
+    anc_availability,
+    delivery_availability,
+    child_availability
+  ),
+  Readiness = c(
+    anc_readiness,
+    delivery_readiness,
+    child_readiness
+  ),
+  Readiness_Deficit = c(
+    anc_deficit,
+    delivery_deficit,
+    child_deficit
+  )
+)
+
+print(final_mne_table)
+
+# 10. EQUITY VARIABLES -----------------------------------------
+
+spa_analysis <- spa_analysis %>%
+  mutate(
+    region = factor(
+      v001,
+      levels = c(2,3,4,5,6,7,8,9,10,11,12),
+      labels = c(
+        "Afar","Amhara","Oromia","Somali",
+        "Benishangul-Gumuz","SNNP","Gambella",
+        "Harari","Addis Ababa","Dire Dawa","Sidama"
+      )
+    ),
+
+    residence = factor(
+      v003,
+      levels = c(1,2),
+      labels = c("Urban","Rural")
+    ),
+
+    facility_type = factor(
+      v007,
+      levels = c(1,2,3,4,5,6,7,8,9),
+      labels = c(
+        "Referral Hospital","General Hospital","Primary Hospital",
+        "Health Center","Health Post","Higher Clinic",
+        "Medium Clinic","Lower Clinic","Specialty Clinic"
+      )
+    ),
+
+    managing_authority = factor(
+      v008,
+      levels = c(1,2,3,4),
+      labels = c(
+        "Government/Public",
+        "Other Government",
+        "Private For-Profit",
+        "NGO/Mission"
+      )
+    )
+  ) %>%
+  mutate(
+    facility_group = case_when(
+      facility_type %in% c(
+        "Referral Hospital",
+        "General Hospital",
+        "Primary Hospital"
+      ) ~ "Hospital",
+
+      facility_type == "Health Center" ~ "Health Center",
+      facility_type == "Health Post" ~ "Health Post",
+
+      facility_type %in% c(
+        "Higher Clinic","Medium Clinic",
+        "Lower Clinic","Specialty Clinic"
+      ) ~ "Clinic"
+    ),
+
+    authority_group = case_when(
+      managing_authority %in% c(
+        "Government/Public","Other Government"
+      ) ~ "Public",
+
+      managing_authority %in% c(
+        "Private For-Profit","NGO/Mission"
+      ) ~ "Non-government"
+    ),
+
+    facility_group = factor(
+      facility_group,
+      levels = c(
+        "Hospital","Health Center",
+        "Health Post","Clinic"
+      )
+    ),
+
+    authority_group = factor(
+      authority_group,
+      levels = c("Public","Non-government")
+    )
+  )
+
+# 11. EQUITY ANALYSIS FUNCTION --------------------------------
+
+equity_summary <- function(data, readiness_var, group_var) {
+
+  data %>%
+    filter(
+      !is.na(.data[[readiness_var]]),
+      !is.na(.data[[group_var]])
+    ) %>%
+    group_by(.data[[group_var]]) %>%
+    summarise(
+      Facilities = n(),
+      Weighted_Readiness = weighted_mean(
+        .data[[readiness_var]],
+        analysis_weight
+      ),
+      .groups = "drop"
+    ) %>%
+    mutate(
+      Weighted_Readiness = round(
+        Weighted_Readiness, 1
+      )
+    )
+}
+
+# Regional readiness
+anc_equity_region <- equity_summary(
+  anc_analysis,
+  "anc_readiness",
+  "region"
+)
+
+delivery_equity_region <- equity_summary(
+  delivery_analysis,
+  "delivery_readiness",
+  "region"
+)
+
+child_equity_region <- equity_summary(
+  child_analysis,
+  "child_readiness",
+  "region"
+)
+
+# Other equity dimensions
+anc_equity_residence <- equity_summary(
+  anc_analysis, "anc_readiness", "residence"
+)
+
+anc_equity_facility <- equity_summary(
+  anc_analysis, "anc_readiness", "facility_group"
+)
+
+anc_equity_authority <- equity_summary(
+  anc_analysis, "anc_readiness", "authority_group"
+)
+
+delivery_equity_residence <- equity_summary(
+  delivery_analysis, "delivery_readiness", "residence"
+)
+
+delivery_equity_facility <- equity_summary(
+  delivery_analysis, "delivery_readiness", "facility_group"
+)
+
+delivery_equity_authority <- equity_summary(
+  delivery_analysis, "delivery_readiness", "authority_group"
+)
+
+child_equity_residence <- equity_summary(
+  child_analysis, "child_readiness", "residence"
+)
+
+child_equity_facility <- equity_summary(
+  child_analysis, "child_readiness", "facility_group"
+)
+
+child_equity_authority <- equity_summary(
+  child_analysis, "child_readiness", "authority_group"
+)
+
+# 12. EQUITY GAP FUNCTION --------------------------------------
+
+equity_gap <- function(x) {
+  max(x, na.rm = TRUE) - min(x, na.rm = TRUE)
+}
+
+equity_gap_table <- tibble(
+  Domain = c("ANC", "Normal Delivery", "Child Health"),
+
+  Regional_Gap = c(
+    equity_gap(anc_equity_region$Weighted_Readiness),
+    equity_gap(delivery_equity_region$Weighted_Readiness),
+    equity_gap(child_equity_region$Weighted_Readiness)
+  ),
+
+  Urban_Rural_Gap = c(
+    equity_gap(anc_equity_residence$Weighted_Readiness),
+    equity_gap(delivery_equity_residence$Weighted_Readiness),
+    equity_gap(child_equity_residence$Weighted_Readiness)
+  ),
+
+  Facility_Group_Gap = c(
+    equity_gap(anc_equity_facility$Weighted_Readiness),
+    equity_gap(delivery_equity_facility$Weighted_Readiness),
+    equity_gap(child_equity_facility$Weighted_Readiness)
+  ),
+
+  Authority_Gap = c(
+    equity_gap(anc_equity_authority$Weighted_Readiness),
+    equity_gap(delivery_equity_authority$Weighted_Readiness),
+    equity_gap(child_equity_authority$Weighted_Readiness)
+  )
+)
+
+print(equity_gap_table)
+
+# 13. COMPONENT-LEVEL BOTTLENECK ANALYSIS ----------------------
+
+component_summary <- function(data, variables) {
+
+  map_dfr(variables, function(v) {
+
+    tibble(
+      Component = v,
+      Weighted_Availability =
+        weighted_percent(
+          data[[v]],
+          data$analysis_weight
+        )
+    )
+  })
+}
+
+anc_components <- component_summary(
+  anc_analysis,
+  anc_vars
+)
+
+delivery_components <- component_summary(
+  delivery_analysis,
+  delivery_vars
+)
+
+child_components <- component_summary(
+  child_analysis,
+  child_vars
+)
+
+# 14. FIGURE 1 — AVAILABILITY VS READINESS ---------------------
+
+figure1_data <- final_mne_table %>%
+  select(
+    Domain,
+    Service_Availability,
+    Readiness
+  ) %>%
+  pivot_longer(
+    cols = c(Service_Availability, Readiness),
+    names_to = "Indicator",
+    values_to = "Percent"
+  ) %>%
+  mutate(
+    Indicator = factor(
+      Indicator,
+      levels = c(
+        "Service_Availability",
+        "Readiness"
+      ),
+      labels = c(
+        "Service Availability",
+        "Service Readiness"
+      )
+    )
+  )
+
+ggplot(
+  figure1_data,
+  aes(
+    x = Domain,
+    y = Percent,
+    fill = Indicator
+  )
+) +
+  geom_col(
+    position = "dodge",
+    width = 0.7
+  ) +
+  geom_text(
+    aes(
+      label = paste0(
+        round(Percent, 1), "%"
+      )
+    ),
+    position = position_dodge(width = 0.7),
+    vjust = -0.3,
+    size = 4
+  ) +
+  scale_y_continuous(
+    limits = c(0,100),
+    breaks = seq(0,100,20)
+  ) +
+  labs(
+    title = "Service Availability and Readiness",
+    subtitle = "Weighted estimates from Ethiopia SPA 2021–22",
+    x = NULL,
+    y = "Percentage",
+    fill = NULL
+  ) +
+  theme_minimal(base_size = 13)
+
+# 15. FIGURE 2 — REGIONAL EQUITY -------------------------------
+
+regional_readiness <- bind_rows(
+  anc_equity_region %>%
+    mutate(Domain = "ANC") %>%
+    rename(Region = region),
+
+  delivery_equity_region %>%
+    mutate(Domain = "Normal Delivery") %>%
+    rename(Region = region),
+
+  child_equity_region %>%
+    mutate(Domain = "Child Health") %>%
+    rename(Region = region)
+) %>%
+  select(
+    Region,
+    Facilities,
+    Weighted_Readiness,
+    Domain
+  )
+
+ggplot(
+  regional_readiness,
+  aes(
+    x = reorder(
+      Region,
+      Weighted_Readiness
+    ),
+    y = Weighted_Readiness
+  )
+) +
+  geom_col() +
+  coord_flip() +
+  facet_wrap(~Domain) +
+  scale_y_continuous(
+    limits = c(0,100),
+    breaks = seq(0,100,20)
+  ) +
+  labs(
+    title = "Regional Equity in Service Readiness",
+    subtitle = "Weighted readiness estimates by service domain",
+    x = NULL,
+    y = "Weighted readiness (%)"
+  ) +
+  theme_minimal(base_size = 12)
+
+# 16. FIGURE 3 — COMPONENT BOTTLENECKS -------------------------
+
+figure3_data <- bind_rows(
+  anc_components %>%
+    mutate(Domain = "ANC"),
+
+  delivery_components %>%
+    mutate(Domain = "Normal Delivery"),
+
+  child_components %>%
+    mutate(Domain = "Child Health")
+)
+
+ggplot(
+  figure3_data,
+  aes(
+    x = reorder(
+      Component,
+      Weighted_Availability
+    ),
+    y = Weighted_Availability
+  )
+) +
+  geom_col() +
+  coord_flip() +
+  facet_wrap(~Domain, scales = "free_y") +
+  scale_y_continuous(
+    limits = c(0,100),
+    breaks = seq(0,100,20)
+  ) +
+  labs(
+    title = "Service-Readiness Component Availability",
+    subtitle = "Weighted availability of selected readiness components",
+    x = NULL,
+    y = "Weighted availability (%)"
+  ) +
+  theme_minimal(base_size = 11)
+
+# 17. EXPORT RESULTS -------------------------------------------
+
+write_csv(
+  final_mne_table,
+  "results/national_performance.csv"
+)
+
+write_csv(
+  equity_gap_table,
+  "results/equity_gaps.csv"
+)
+
+write_csv(
+  regional_readiness,
+  "results/regional_readiness.csv"
+)
+
+write_csv(
+  figure3_data,
+  "results/component_bottlenecks.csv"
+
+)
+
+# ============================================================
+# END OF ANALYSIS
+# ============================================================
